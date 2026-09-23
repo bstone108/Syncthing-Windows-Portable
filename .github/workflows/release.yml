@@ -1,0 +1,257 @@
+name: Release
+
+on:
+  pull_request:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Optional published release version YYYY.M.D.N (unpadded, America/Chicago date.build).
+          Leave empty to assign the next N for today's Chicago calendar day.
+          Tag pushes use the tag and do not increment.
+        required: false
+        type: string
+
+# Pull-request verification can cancel in-progress runs. Real publishes share
+# one queue so two runs cannot take the same YYYY.M.D.N. cancel-in-progress is
+# false for publishes: workflow_dispatch creates the tag, and the follow-up tag
+# push must wait and then skip instead of cancelling the publish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'publish' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      compile: ${{ steps.decide.outputs.compile }}
+      publish: ${{ steps.decide.outputs.publish }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Decide gate and version
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          DATE_BUILD_VERSION_DEBUG: "1"
+        run: |
+          set -euo pipefail
+          python3 scripts/next-date-build-version.py --self-test
+
+          compile=0
+          publish=0
+          version=""
+
+          refuse_duplicates() {
+            local tag="$1"
+            if gh release view "${tag}" --repo "${GH_REPO}" >/dev/null 2>&1; then
+              echo "Refusing duplicate date.build ${tag}: GitHub release already exists." >&2
+              exit 1
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+              echo "Refusing duplicate date.build ${tag}: remote tag already exists." >&2
+              exit 1
+            fi
+          }
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            echo "PR/test run: compile only. Not assigning date.build or publishing a GitHub release."
+            compile=1
+          elif [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ -n "${INPUT_VERSION}" ]]; then
+              version="$(python3 scripts/next-date-build-version.py --from-tag "${INPUT_VERSION}")"
+              echo "workflow_dispatch requested ${version} (no increment)."
+            else
+              version="$(python3 scripts/next-date-build-version.py)"
+              echo "workflow_dispatch assigned next America/Chicago date.build ${version}."
+            fi
+            refuse_duplicates "v${version}"
+            publish=1
+          elif [[ "${EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="$(python3 scripts/next-date-build-version.py --from-tag "${REF_NAME}")"
+            tag="v${version}"
+            if gh release view "${tag}" --repo "${GH_REPO}" >/dev/null 2>&1; then
+              echo "Tag ${tag} already has a GitHub release. Skipping the tag-triggered rebuild so the workflow_dispatch publish is not clobbered."
+            else
+              echo "Tag ${tag} has no release yet. Packaging that version without incrementing N."
+              publish=1
+            fi
+          else
+            echo "Unsupported event ${EVENT_NAME}. Skipping."
+          fi
+
+          if [[ "${publish}" == "1" && -z "${version}" ]]; then
+            echo "Refusing to publish without a date.build version." >&2
+            exit 1
+          fi
+
+          {
+            echo "compile=${compile}"
+            echo "publish=${publish}"
+            echo "version=${version}"
+          } >> "${GITHUB_OUTPUT}"
+
+  compile-windows:
+    name: Compile only (pull request)
+    needs: resolve-version
+    if: needs.resolve-version.outputs.compile == '1'
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Windows time zone data for the version helper
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m pip install --disable-pip-version-check tzdata
+
+      - name: Compile Release without assigning a version
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/package-windows.ps1 -CompileOnly
+
+  package-windows:
+    name: Package win-x64
+    needs: resolve-version
+    if: needs.resolve-version.outputs.publish == '1'
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Windows time zone data for the version helper
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m pip install --disable-pip-version-check tzdata
+
+      - name: Publish and zip portable layout
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/package-windows.ps1 -Version $env:APP_VERSION
+
+      - name: Upload portable zip and checksums
+        uses: actions/upload-artifact@v7
+        with:
+          name: PortableSyncthing-${{ needs.resolve-version.outputs.version }}-win-x64
+          path: |
+            dist/PortableSyncthing-${{ needs.resolve-version.outputs.version }}-win-x64.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    needs:
+      - resolve-version
+      - package-windows
+    if: needs.resolve-version.outputs.publish == '1'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: PortableSyncthing-${{ needs.resolve-version.outputs.version }}-win-x64
+          path: release-assets
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.resolve-version.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${APP_VERSION}" =~ ^[0-9]{4}\.([1-9]|1[0-2])\.([1-9]|[12][0-9]|3[01])\.[1-9][0-9]*$ ]]; then
+            echo "Refusing to publish non-release version ${APP_VERSION}" >&2
+            exit 1
+          fi
+          tag="v${APP_VERSION}"
+          zip_name="PortableSyncthing-${APP_VERSION}-win-x64.zip"
+          mapfile -t zips < <(find release-assets -type f -name "${zip_name}" -print)
+          mapfile -t sums < <(find release-assets -type f -name "SHA256SUMS" -print)
+          if [[ "${#zips[@]}" -ne 1 || "${#sums[@]}" -ne 1 ]]; then
+            echo "Expected exactly one ${zip_name} and one SHA256SUMS in the packaged artifact." >&2
+            find release-assets -type f >&2 || true
+            exit 1
+          fi
+          mkdir -p release-staged
+          cp "${zips[0]}" "${sums[0]}" release-staged/
+          (
+            cd release-staged
+            sha256sum -c SHA256SUMS
+          )
+          if gh release view "${tag}" --repo "${GH_REPO}" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; refusing to clobber." >&2
+            exit 1
+          fi
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if gh api --silent "repos/${GH_REPO}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              echo "Tag ${tag} already exists; refusing to reuse N from workflow_dispatch." >&2
+              exit 1
+            fi
+          fi
+          notes_file="${RUNNER_TEMP}/release-notes.md"
+          cat > "${notes_file}" <<NOTES
+          Portable Syncthing ${APP_VERSION} for Windows (win-x64).
+
+          Extract \`PortableSyncthing-${APP_VERSION}-win-x64.zip\` and run \`PortableSyncthing.exe\`. This is a portable window app: it does not install a Windows service and it does not use a tray icon. The build is unsigned.
+
+          The first launch still downloads the official Syncthing runtime, verifies its release SHA-256, and places \`syncthing.exe\` in \`bin\\current\`. That runtime is not inside the zip.
+
+          The embedded Syncthing GUI uses the Evergreen WebView2 Runtime already installed on the PC. A fixed WebView2 runtime is not bundled in this release.
+
+          Verify the zip with \`SHA256SUMS\` (\`sha256sum -c SHA256SUMS\`).
+          NOTES
+          gh release create "${tag}" \
+            --repo "${GH_REPO}" \
+            --title "Portable Syncthing ${APP_VERSION}" \
+            --notes-file "${notes_file}" \
+            --latest \
+            --target "${GITHUB_SHA}" \
+            "release-staged/${zip_name}" \
+            "release-staged/SHA256SUMS"
