@@ -55,6 +55,8 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           dotnet build src/PortableSyncthing.Windows/PortableSyncthing.Windows.csproj -c Release
 
+      # App bits only. scripts/package-windows.ps1 downloads the Fixed Version
+      # WebView2 runtime when it builds a date.build zip, which this job does not.
       - name: Unsigned publish (CI sha, not a date.build release)
         run: |
           $PSNativeCommandUseErrorActionPreference = $true

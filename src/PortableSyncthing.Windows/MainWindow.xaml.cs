@@ -2,8 +2,10 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Windows;
-using Microsoft.Web.WebView2.Wpf;
+using Microsoft.Web.WebView2.Core;
 using PortableSyncthing.Core;
 
 namespace PortableSyncthing.Windows;
@@ -30,11 +32,7 @@ public partial class MainWindow : Window
             _root = PortableRoot.FromExecutablePath(Environment.ProcessPath ?? throw new InvalidOperationException("Unable to resolve application location."));
             Directory.CreateDirectory(_root.DataDirectory);
             Directory.CreateDirectory(_root.LogsDirectory);
-            SyncthingBrowser.CreationProperties = new CoreWebView2CreationProperties
-            {
-                UserDataFolder = Path.Combine(_root.DataDirectory, "webview2")
-            };
-            await SyncthingBrowser.EnsureCoreWebView2Async();
+            await InitializeFixedWebViewAsync(_root);
             await StartOrPromptForInstallAsync();
         }
         catch (Exception exception)
@@ -42,6 +40,113 @@ public partial class MainWindow : Window
             SetStatus("Startup failed: " + exception.Message);
             AddLog(exception.ToString());
         }
+    }
+
+    private async Task InitializeFixedWebViewAsync(PortableRoot root)
+    {
+        var runtimeDirectory = root.WebView2RuntimeDirectory;
+        var browserExecutable = PortableRoot.Combine(runtimeDirectory, "msedgewebview2.exe");
+        if (!File.Exists(browserExecutable))
+        {
+            throw new FileNotFoundException(
+                "Fixed Version WebView2 Runtime is missing (" + browserExecutable + "). Evergreen WebView2 is not used. Package the app with scripts/package-windows.ps1 so WebView2Runtime sits next to PortableSyncthing.exe.",
+                browserExecutable);
+        }
+
+        await TryGrantWebView2AppContainerAccessAsync(runtimeDirectory, browserExecutable);
+        var environment = await CoreWebView2Environment.CreateAsync(
+            browserExecutableFolder: runtimeDirectory,
+            userDataFolder: PortableRoot.Combine(root.DataDirectory, "webview2"));
+        await SyncthingBrowser.EnsureCoreWebView2Async(environment);
+        AddLog("Using bundled Fixed Version WebView2 runtime.");
+    }
+
+    // Windows 10 runs Fixed Version 120+ renderers in an AppContainer. Zip extraction does not
+    // keep the ACLs Microsoft requires, so grant them on the local runtime folder when missing.
+    private async Task TryGrantWebView2AppContainerAccessAsync(string runtimeDirectory, string browserExecutable)
+    {
+        try
+        {
+            if (HasAppContainerReadExecute(browserExecutable)) return;
+        }
+        catch (Exception exception)
+        {
+            AddLog("Could not read WebView2 runtime permissions: " + exception.Message);
+        }
+
+        foreach (var sid in new[] { "S-1-15-2-2", "S-1-15-2-1" })
+        {
+            try
+            {
+                using var process = new Process();
+                process.StartInfo.FileName = "icacls.exe";
+                process.StartInfo.UseShellExecute = false;
+                process.StartInfo.CreateNoWindow = true;
+                process.StartInfo.RedirectStandardOutput = true;
+                process.StartInfo.RedirectStandardError = true;
+                process.StartInfo.ArgumentList.Add(runtimeDirectory);
+                process.StartInfo.ArgumentList.Add("/grant");
+                process.StartInfo.ArgumentList.Add($"*{sid}:(OI)(CI)(RX)");
+                process.StartInfo.ArgumentList.Add("/T");
+                process.StartInfo.ArgumentList.Add("/C");
+                process.StartInfo.ArgumentList.Add("/Q");
+                if (!process.Start())
+                {
+                    AddLog("Could not start icacls.exe to grant WebView2 runtime access.");
+                    return;
+                }
+
+                var stdout = process.StandardOutput.ReadToEndAsync();
+                var stderr = process.StandardError.ReadToEndAsync();
+                using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+                try
+                {
+                    await process.WaitForExitAsync(timeout.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    try { process.Kill(entireProcessTree: true); } catch (Exception) { }
+                    AddLog("Timed out granting WebView2 runtime folder permissions.");
+                    return;
+                }
+
+                var error = (await stderr).Trim();
+                _ = await stdout;
+                if (process.ExitCode != 0)
+                    AddLog($"WebView2 runtime permission grant exited {process.ExitCode} for {sid}. {error}".Trim());
+            }
+            catch (Exception exception)
+            {
+                AddLog("WebView2 runtime permission grant was not applied: " + exception.Message);
+                return;
+            }
+        }
+    }
+
+    private static bool HasAppContainerReadExecute(string path)
+    {
+        var identities = new[]
+        {
+            new SecurityIdentifier("S-1-15-2-1"),
+            new SecurityIdentifier("S-1-15-2-2")
+        };
+        var rules = new FileInfo(path).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier));
+        foreach (var identity in identities)
+        {
+            var allowed = false;
+            foreach (FileSystemAccessRule rule in rules)
+            {
+                if (rule.AccessControlType != AccessControlType.Allow) continue;
+                if (!identity.Equals(rule.IdentityReference)) continue;
+                if ((rule.FileSystemRights & FileSystemRights.ReadAndExecute) == FileSystemRights.ReadAndExecute)
+                {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed) return false;
+        }
+        return true;
     }
 
     private async Task StartOrPromptForInstallAsync()

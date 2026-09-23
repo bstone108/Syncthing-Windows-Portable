@@ -12,6 +12,7 @@ public sealed record PortableRoot(string RootDirectory)
     public string SyncthingExecutablePath => Combine(Combine(RootDirectory, "bin"), "current", "syncthing.exe");
     public string FolderMappingsPath => Combine(DataDirectory, "portable-folders.json");
     public string LogsDirectory => Combine(DataDirectory, "logs");
+    public string WebView2RuntimeDirectory => Combine(RootDirectory, "WebView2Runtime");
 
     public static PortableRoot FromExecutablePath(string executablePath)
     {
