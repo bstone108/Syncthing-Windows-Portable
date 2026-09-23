@@ -5,3 +5,5 @@ dist/
 .toolchain/
 **/bin/
 **/obj/
+__pycache__/
+*.pyc
