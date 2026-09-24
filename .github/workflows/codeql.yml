@@ -1,0 +1,48 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main, "cursor/**"]
+  pull_request:
+  schedule:
+    # Weekly. Same off-hour slot as Decentralized-RMM.
+    - cron: "27 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze C#
+    # net8.0-windows WPF does not build on Linux. Autobuild runs
+    # `dotnet build` on every .csproj at the shallowest depth (Core,
+    # Windows UI, and contract tests).
+    runs-on: windows-latest
+    permissions:
+      # Job permissions replace the workflow set. Checkout still needs contents.
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      # If Autobuild fails, remove that step and build the Windows app
+      # the same way CI does. That project reference pulls in Core:
+      #   dotnet build src/PortableSyncthing.Windows/PortableSyncthing.Windows.csproj -c Release
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:csharp"

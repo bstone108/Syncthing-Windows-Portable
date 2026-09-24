@@ -83,6 +83,10 @@ Keep the portable folder on a local drive. Fixed Version WebView2 cannot start f
 
 CI does not assign or bump a `YYYY.M.D.N` version and does not create a GitHub Release. The CI publish is stamped `0.0.0` with informational version `ci-<sha>` so it cannot be mistaken for a shipped date.build. That publish folder does not include `WebView2Runtime`; the date.build zip from the Release workflow does. `permissions` stay `contents: read`.
 
+## Security
+
+`.github/workflows/codeql.yml` runs CodeQL for C# (`security-extended`) on pushes to `main` and `cursor/**`, on pull requests, and weekly. Dependabot alerts are enabled. Automated Dependabot pull requests are off, so dependency findings stay alerts and do not open version-update or security pull requests.
+
 ## Versioning
 
 Real releases use `year.month.day.build` in America/Chicago, with the month, day, and build unpadded. Example: `2026.9.23.1`. The git tag is `v2026.9.23.1`.
