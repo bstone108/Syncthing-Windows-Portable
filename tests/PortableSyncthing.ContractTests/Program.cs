@@ -8,6 +8,7 @@ suite.Run("portable root derives from executable directory", () =>
     Assert.Equal(@"F:\PortableSyncthing", root.RootDirectory);
     Assert.Equal(@"F:\PortableSyncthing\data\syncthing", root.SyncthingHomeDirectory);
     Assert.Equal(@"F:\PortableSyncthing\bin\current\syncthing.exe", root.SyncthingExecutablePath);
+    Assert.Equal(@"F:\PortableSyncthing\WebView2Runtime", root.WebView2RuntimeDirectory);
 });
 
 suite.Run("remapper rewrites portable folder paths after drive letter changes", () =>

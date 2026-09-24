@@ -7,6 +7,8 @@ A standalone Windows application that owns the Syncthing process for one portabl
 ```text
 PortableSyncthing\
 ├── PortableSyncthing.exe
+├── WebView2Runtime\               # Fixed Version WebView2 Runtime (win-x64)
+│   └── msedgewebview2.exe
 ├── bin\current\syncthing.exe      # verified managed runtime
 ├── data\
 │   ├── syncthing\                 # Syncthing config.xml, database and device keys
@@ -16,7 +18,7 @@ PortableSyncthing\
 └── updates\                        # verified staged release downloads
 ```
 
-The first launch automatically downloads the matching official Syncthing runtime, verifies its release SHA-256 asset, and places it in `bin\current`. Future updates remain available through **Check and Update**.
+The first launch automatically downloads the matching official Syncthing runtime, verifies its release SHA-256 asset, and places it in `bin\current`. Future updates remain available through **Check and Update**. `WebView2Runtime\` is already in the zip, so that first launch does not need the Evergreen WebView2 Runtime.
 
 Nothing is installed as a service. The app does not create a tray icon. Closing its main window asks Syncthing to shut down through its local REST API, waits briefly, and force-stops only the child process if graceful shutdown fails.
 
@@ -44,10 +46,31 @@ The Windows UI targets `net8.0-windows` and WebView2. Build it on Windows with t
 
 ```powershell
 dotnet build .\src\PortableSyncthing.Windows\PortableSyncthing.Windows.csproj -c Release
-dotnet publish .\src\PortableSyncthing.Windows\PortableSyncthing.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o .\dist\win-x64
+./scripts/package-windows.ps1 -CompileOnly
+./scripts/package-windows.ps1 -Version 2026.9.23.1
 ```
 
-Published releases are unsigned. They use the Evergreen WebView2 Runtime already installed on the PC. Bundling a fixed WebView2 runtime, so the app has no host WebView2 dependency, is a follow-up and is not required for this release. The app itself is intentionally `asInvoker`: it never requires elevation.
+`-CompileOnly` checks the Release build and does not download WebView2 or assign a date.build version. The versioned command is what writes the portable zip. A plain `dotnet publish` does not include `WebView2Runtime\`; use `package-windows.ps1` for a folder that can start the GUI.
+
+Published releases are unsigned. The app is intentionally `asInvoker`: it never requires elevation.
+
+## Fixed Version WebView2
+
+Release zips bundle Microsoft's Fixed Version WebView2 Runtime for win-x64 in `WebView2Runtime\`, next to `PortableSyncthing.exe`. On startup the app calls `CoreWebView2Environment.CreateAsync` with that folder as `browserExecutableFolder` and `data\webview2` as the browser profile. The Evergreen WebView2 Runtime does not need to be installed. The GUI can open without a WebView2 download.
+
+The package pin is `scripts/webview2-fixed-runtime.json`:
+
+- Fixed Version `153.0.4234.48`, x64
+- CAB `Microsoft.WebView2.FixedVersionRuntime.153.0.4234.48.x64.cab` (308,509,880 bytes, about 294 MB)
+- SHA-256 `11e8240cb0bc56dcd3e4498907203c251346f65107fe35a3a13e152c7d51c79e`
+- URL from the [WebView2 download page](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section), host `msedge.sf.dl.delivery.mp.microsoft.com`
+- Extracted runtime about 668 MB (699,773,121 bytes) under `WebView2Runtime\`, including `msedgewebview2.exe`
+
+The CAB is not committed. Packaging downloads it (cached under gitignored `.toolchain\webview2\`), checks the size and SHA-256, expands it with `expand.exe -F:*`, and moves the folder that contains `msedgewebview2.exe` to `WebView2Runtime\`. Pull-request CI does not download it. The Release workflow downloads it only when it builds a date.build zip.
+
+Microsoft keeps recent Fixed Version CABs on that page, and the CDN link includes a file id that can change if the package is republished. To move the pin, download the x64 Fixed Version CAB you want, replace `version`, `fileName`, `url`, `sha256`, and `cabBytes` in the pin file, and leave the CAB out of git.
+
+Keep the portable folder on a local drive. Fixed Version WebView2 cannot start from a UNC path. On Windows 10, Fixed Version 120 and later run the renderer in an AppContainer, so the first launch grants All Application Packages and All Restricted Application Packages read and execute on `WebView2Runtime` (`icacls`, including files already in the folder). That grant needs NTFS. Windows 11 does not need it. Later launches skip the grant when `msedgewebview2.exe` already has those ACEs.
 
 ## Continuous integration
 
@@ -58,7 +81,7 @@ Published releases are unsigned. They use the Evergreen WebView2 Runtime already
 - `dotnet build src/PortableSyncthing.Windows/PortableSyncthing.Windows.csproj -c Release`
 - an unsigned self-contained publish, uploaded as `PortableSyncthing-ci-<git-sha>-win-x64`
 
-CI does not assign or bump a `YYYY.M.D.N` version and does not create a GitHub Release. The CI publish is stamped `0.0.0` with informational version `ci-<sha>` so it cannot be mistaken for a shipped date.build. `permissions` stay `contents: read`.
+CI does not assign or bump a `YYYY.M.D.N` version and does not create a GitHub Release. The CI publish is stamped `0.0.0` with informational version `ci-<sha>` so it cannot be mistaken for a shipped date.build. That publish folder does not include `WebView2Runtime`; the date.build zip from the Release workflow does. `permissions` stay `contents: read`.
 
 ## Security
 
@@ -89,7 +112,7 @@ The workflow assigns the next America/Chicago date.build (for example `2026.9.23
 - `PortableSyncthing-{version}-win-x64.zip`
 - `SHA256SUMS`
 
-The zip contains a `PortableSyncthing\` folder with `PortableSyncthing.exe`, any sibling files from `dotnet publish` (including the WebView2 loader when the SDK emits it next to the exe), `VERSION.txt`, and a short `README.txt`. The first launch still downloads the Syncthing runtime into `bin\current`. The release is unsigned. Evergreen WebView2 must already be installed.
+The zip contains a `PortableSyncthing\` folder with `PortableSyncthing.exe`, `WebView2Runtime\` (the pinned Fixed Version WebView2 Runtime), any sibling files from `dotnet publish` (including the WebView2 loader when the SDK emits it next to the exe), `VERSION.txt`, and a short `README.txt`. The first launch still downloads the Syncthing runtime into `bin\current`. The release is unsigned. Evergreen WebView2 is not required.
 
 That run creates the tag. The tag push starts the Release workflow again; if the GitHub Release already exists, the second run skips instead of rebuilding or overwriting it.
 

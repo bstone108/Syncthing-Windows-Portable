@@ -243,7 +243,7 @@ jobs:
 
           The first launch still downloads the official Syncthing runtime, verifies its release SHA-256, and places \`syncthing.exe\` in \`bin\\current\`. That runtime is not inside the zip.
 
-          The embedded Syncthing GUI uses the Evergreen WebView2 Runtime already installed on the PC. A fixed WebView2 runtime is not bundled in this release.
+          The zip bundles the Fixed Version WebView2 Runtime (win-x64) under \`WebView2Runtime\`. The app uses that local runtime, so the Evergreen WebView2 Runtime does not need to be installed. Keep the extracted folder on a local drive.
 
           Verify the zip with \`SHA256SUMS\` (\`sha256sum -c SHA256SUMS\`).
           NOTES
