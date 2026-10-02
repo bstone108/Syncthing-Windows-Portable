@@ -30,6 +30,9 @@ public partial class MainWindow : Window
         try
         {
             _root = PortableRoot.FromExecutablePath(Environment.ProcessPath ?? throw new InvalidOperationException("Unable to resolve application location."));
+            var migration = LayoutMigration.Migrate(_root.RootDirectory);
+            foreach (var line in migration.Lines)
+                AddLog(line);
             Directory.CreateDirectory(_root.DataDirectory);
             Directory.CreateDirectory(_root.LogsDirectory);
             await InitializeFixedWebViewAsync(_root);
@@ -37,6 +40,11 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            if (exception is LayoutMigrationException migrationFailure)
+            {
+                foreach (var line in migrationFailure.Report.Lines)
+                    AddLog(line);
+            }
             SetStatus("Startup failed: " + exception.Message);
             AddLog(exception.ToString());
         }
@@ -44,19 +52,23 @@ public partial class MainWindow : Window
 
     private async Task InitializeFixedWebViewAsync(PortableRoot root)
     {
+        var loaderFolder = ResolveWebView2LoaderFolder(root);
+        CoreWebView2Environment.SetLoaderDllFolderPath(loaderFolder);
+        AddLog("Using WebView2 loader from " + loaderFolder);
+
         var runtimeDirectory = root.WebView2RuntimeDirectory;
         var browserExecutable = PortableRoot.Combine(runtimeDirectory, "msedgewebview2.exe");
         if (!File.Exists(browserExecutable))
         {
             throw new FileNotFoundException(
-                "Fixed Version WebView2 Runtime is missing (" + browserExecutable + "). Evergreen WebView2 is not used. Package the app with scripts/package-windows.ps1 so WebView2Runtime sits next to PortableSyncthing.exe.",
+                "Fixed Version WebView2 Runtime is missing (" + browserExecutable + "). Evergreen WebView2 is not used. Package the app with scripts/package-windows.ps1 so support\\WebView2Runtime is beside PortableSyncthing.exe.",
                 browserExecutable);
         }
 
         await TryGrantWebView2AppContainerAccessAsync(runtimeDirectory, browserExecutable);
         var environment = await CoreWebView2Environment.CreateAsync(
             browserExecutableFolder: runtimeDirectory,
-            userDataFolder: PortableRoot.Combine(root.DataDirectory, "webview2"));
+            userDataFolder: root.WebView2UserDataDirectory);
         await SyncthingBrowser.EnsureCoreWebView2Async(environment);
         AddLog("Using bundled Fixed Version WebView2 runtime.");
     }
@@ -121,6 +133,54 @@ public partial class MainWindow : Window
                 return;
             }
         }
+    }
+
+    // Prefer the copy extracted from this single-file build. A v2026.9.23.1 folder may also
+    // have moved WebView2Loader.dll into support; use that only when the bundle did not embed one.
+    private static string ResolveWebView2LoaderFolder(PortableRoot root)
+    {
+        var extracted = FindLoaderFolderInNativeSearchPath();
+        if (extracted is not null)
+            return extracted;
+
+        foreach (var folder in new[]
+        {
+            root.SupportDirectory,
+            PortableRoot.Combine(root.SupportDirectory, "runtimes", "win-x64", "native"),
+            root.RootDirectory,
+            PortableRoot.Combine(root.RootDirectory, "runtimes", "win-x64", "native")
+        })
+        {
+            if (File.Exists(PortableRoot.Combine(folder, "WebView2Loader.dll")))
+                return folder;
+        }
+
+        throw new FileNotFoundException(
+            "WebView2Loader.dll was not found in the single-file native extract directory or in support. Package the app with scripts/package-windows.ps1.",
+            PortableRoot.Combine(root.SupportDirectory, "WebView2Loader.dll"));
+    }
+
+    private static string? FindLoaderFolderInNativeSearchPath()
+    {
+        if (AppContext.GetData("NATIVE_DLL_SEARCH_DIRECTORIES") is not string search || string.IsNullOrWhiteSpace(search))
+            return null;
+
+        foreach (var entry in search.Split(new[] { Path.PathSeparator, ';' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var folder = entry.Trim().Trim('"');
+            if (folder.Length == 0)
+                continue;
+
+            var direct = Path.Combine(folder, "WebView2Loader.dll");
+            if (File.Exists(direct))
+                return Path.GetFullPath(folder);
+
+            var nested = Path.Combine(folder, "runtimes", "win-x64", "native");
+            if (File.Exists(Path.Combine(nested, "WebView2Loader.dll")))
+                return Path.GetFullPath(nested);
+        }
+
+        return null;
     }
 
     private static bool HasAppContainerReadExecute(string path)

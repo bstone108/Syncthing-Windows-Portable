@@ -61,8 +61,25 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           dotnet publish src/PortableSyncthing.Windows/PortableSyncthing.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:Version=0.0.0 -p:InformationalVersion=ci-${{ github.sha }} -p:IncludeSourceRevisionInInformationalVersion=false -o "${{ runner.temp }}/portable-syncthing-ci"
-          if (-not (Test-Path -LiteralPath "${{ runner.temp }}/portable-syncthing-ci/PortableSyncthing.exe")) {
+          $publish = "${{ runner.temp }}/portable-syncthing-ci"
+          if (-not (Test-Path -LiteralPath "$publish/PortableSyncthing.exe")) {
             throw "CI publish did not produce PortableSyncthing.exe"
+          }
+          $looseDlls = @(Get-ChildItem -LiteralPath $publish -Filter *.dll -File)
+          if ($looseDlls.Count -gt 0) {
+            throw "Single-file publish left native DLLs beside PortableSyncthing.exe: $($looseDlls.Name -join ', ')."
+          }
+          if (Test-Path -LiteralPath "$publish/runtimes") {
+            throw "Single-file publish left a runtimes directory beside PortableSyncthing.exe."
+          }
+          $support = Join-Path $publish "support"
+          New-Item -ItemType Directory -Force -Path $support | Out-Null
+          Get-ChildItem -LiteralPath $publish -Force | Where-Object { $_.Name -ne "PortableSyncthing.exe" -and $_.Name -ne "support" } | ForEach-Object {
+            Move-Item -LiteralPath $_.FullName -Destination (Join-Path $support $_.Name)
+          }
+          $top = @((Get-ChildItem -LiteralPath $publish -Force | Select-Object -ExpandProperty Name | Sort-Object) -join ",")
+          if ($top -ne "PortableSyncthing.exe,support") {
+            throw "CI publish folder must contain only PortableSyncthing.exe and support. Found: $top"
           }
 
       - name: Upload CI publish artifact

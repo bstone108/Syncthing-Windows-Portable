@@ -9,6 +9,12 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Native WPF and WebView2 libraries load from the single-file bundle.
+         Loose copies cannot sit beside the executable. PDBs are embedded so
+         publish does not emit them either. -->
+    <DebugType>embedded</DebugType>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../PortableSyncthing.Core/PortableSyncthing.Core.csproj" />
