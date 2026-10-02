@@ -6,9 +6,13 @@ suite.Run("portable root derives from executable directory", () =>
 {
     var root = PortableRoot.FromExecutablePath(@"F:\PortableSyncthing\PortableSyncthing.exe");
     Assert.Equal(@"F:\PortableSyncthing", root.RootDirectory);
-    Assert.Equal(@"F:\PortableSyncthing\data\syncthing", root.SyncthingHomeDirectory);
-    Assert.Equal(@"F:\PortableSyncthing\bin\current\syncthing.exe", root.SyncthingExecutablePath);
-    Assert.Equal(@"F:\PortableSyncthing\WebView2Runtime", root.WebView2RuntimeDirectory);
+    Assert.Equal(@"F:\PortableSyncthing\support", root.SupportDirectory);
+    Assert.Equal(@"F:\PortableSyncthing\support\data\syncthing", root.SyncthingHomeDirectory);
+    Assert.Equal(@"F:\PortableSyncthing\support\bin\current\syncthing.exe", root.SyncthingExecutablePath);
+    Assert.Equal(@"F:\PortableSyncthing\support\bin\previous", root.PreviousSyncthingDirectory);
+    Assert.Equal(@"F:\PortableSyncthing\support\WebView2Runtime", root.WebView2RuntimeDirectory);
+    Assert.Equal(@"F:\PortableSyncthing\support\data\webview2", root.WebView2UserDataDirectory);
+    Assert.Equal(@"F:\PortableSyncthing\folders\Photos", root.ResolvePortableRelative(@"folders\Photos"));
 });
 
 suite.Run("remapper rewrites portable folder paths after drive letter changes", () =>
@@ -45,12 +49,14 @@ suite.Run("process arguments force portable home and disable Syncthing self-upda
 {
     var portable = PortableRoot.FromExecutablePath(@"G:\PortableSyncthing\PortableSyncthing.exe");
     var arguments = SyncthingLaunchPlan.Create(portable, 8384).Arguments;
-    Assert.Contains("--home=G:\\PortableSyncthing\\data\\syncthing", arguments);
+    Assert.Contains("--home=G:\\PortableSyncthing\\support\\data\\syncthing", arguments);
+    Assert.Contains(@"--log-file=G:\PortableSyncthing\support\data\logs\syncthing.log", arguments);
     Assert.Contains("--no-browser", arguments);
     Assert.Contains("--no-upgrade", arguments);
     Assert.Contains("--gui-address=127.0.0.1:8384", arguments);
 });
 
+LayoutMigrationTests.Run(suite);
 suite.Finish();
 
 internal sealed class ContractSuite
@@ -81,10 +87,28 @@ internal static class Assert
             throw new Exception($"Expected collection to contain '{expected}'.");
     }
 
-    public static void Throws<T>(Action action) where T : Exception
+    public static void Contains(string expected, string actual)
+    {
+        if (actual is null || !actual.Contains(expected, StringComparison.Ordinal))
+            throw new Exception($"Expected '{actual}' to contain '{expected}'.");
+    }
+
+    public static void True(bool condition, string message)
+    {
+        if (!condition)
+            throw new Exception(message);
+    }
+
+    public static void False(bool condition, string message)
+    {
+        if (condition)
+            throw new Exception(message);
+    }
+
+    public static T Throws<T>(Action action) where T : Exception
     {
         try { action(); }
-        catch (T) { return; }
+        catch (T exception) { return exception; }
         throw new Exception($"Expected {typeof(T).Name}.");
     }
 }

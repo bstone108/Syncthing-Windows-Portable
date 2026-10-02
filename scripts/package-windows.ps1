@@ -173,6 +173,47 @@ function Install-FixedWebView2Runtime {
     }
 }
 
+function Assert-NoLoosePublishNatives {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PublishDirectory
+    )
+    $dlls = @(Get-ChildItem -LiteralPath $PublishDirectory -Filter "*.dll" -File -ErrorAction SilentlyContinue)
+    if ($dlls.Count -gt 0) {
+        $names = ($dlls | ForEach-Object { $_.Name }) -join ", "
+        throw "Publish left native DLLs beside PortableSyncthing.exe ($names). IncludeNativeLibrariesForSelfExtract must embed them so they still load. Refusing to ship them loose or under support, because the host loads WPF and runtime natives before managed code can choose a folder."
+    }
+    if (Test-Path -LiteralPath (Join-Path $PublishDirectory "runtimes")) {
+        throw "Publish left a runtimes directory beside PortableSyncthing.exe. Native assets must be embedded in the single-file executable."
+    }
+    foreach ($name in @("PortableSyncthing.dll", "PortableSyncthing.deps.json", "PortableSyncthing.runtimeconfig.json")) {
+        if (Test-Path -LiteralPath (Join-Path $PublishDirectory $name)) {
+            throw "Publish left $name beside PortableSyncthing.exe. A single-file build must bundle it into the executable."
+        }
+    }
+}
+
+function Assert-PortableZipLayout {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LayoutDirectory
+    )
+    $names = @(Get-ChildItem -LiteralPath $LayoutDirectory -Force | Select-Object -ExpandProperty Name | Sort-Object)
+    if ($names.Count -ne 2 -or $names[0] -ne "PortableSyncthing.exe" -or $names[1] -ne "support") {
+        throw "Portable layout must contain only PortableSyncthing.exe and support. Found: $($names -join ', ')"
+    }
+    $exe = Get-Item -LiteralPath (Join-Path $LayoutDirectory "PortableSyncthing.exe")
+    if ($exe.PSIsContainer) {
+        throw "PortableSyncthing.exe must be a file."
+    }
+    $support = Join-Path $LayoutDirectory "support"
+    foreach ($relative in @("WebView2Runtime\msedgewebview2.exe", "VERSION.txt", "README.txt")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $support $relative))) {
+            throw "support is missing $relative."
+        }
+    }
+}
+
 function Write-Utf8File {
     param(
         [Parameter(Mandatory = $true)]
@@ -260,18 +301,29 @@ Portable Syncthing $Version
 Run PortableSyncthing.exe from this folder. The folder is the portable root.
 Nothing is installed as a service, and the app does not use a tray icon.
 
-The first launch downloads the official Syncthing runtime, verifies its release SHA-256, and places syncthing.exe in bin\current. That runtime is not inside this zip.
+This folder contains only PortableSyncthing.exe and the support folder. support\ holds the Fixed Version WebView2 runtime, the Syncthing runtime, configuration, logs, VERSION.txt, and this file.
 
-The embedded Syncthing GUI uses the Fixed Version WebView2 Runtime $($webView2.version) bundled in WebView2Runtime (win-x64). The Evergreen WebView2 Runtime does not need to be installed. Keep this folder on a local drive. Fixed Version WebView2 cannot start from a UNC or network path.
+The first launch downloads the official Syncthing runtime, verifies its release SHA-256, and places syncthing.exe in support\bin\current. That runtime is not inside this zip.
 
-On Windows 10, the first launch grants AppContainer read and execute access on WebView2Runtime. That grant requires NTFS. Windows 11 does not need the grant.
+The embedded Syncthing GUI uses the Fixed Version WebView2 Runtime $($webView2.version) bundled in support\WebView2Runtime (win-x64). The Evergreen WebView2 Runtime does not need to be installed. Keep this folder on a local drive. Fixed Version WebView2 cannot start from a UNC or network path.
+
+On Windows 10, the first launch grants AppContainer read and execute access on support\WebView2Runtime. That grant requires NTFS. Windows 11 does not need the grant.
+
+Synced folders stay where their portable mappings point. Those paths are relative to this folder, the folder that contains PortableSyncthing.exe.
 "@
-Write-Utf8File -Path (Join-Path $publishDir "VERSION.txt") -Text $Version
-Write-Utf8File -Path (Join-Path $publishDir "README.txt") -Text $readme
 
 New-Item -ItemType Directory -Force -Path $layoutDir | Out-Null
-Copy-Item -Path (Join-Path $publishDir "*") -Destination $layoutDir -Recurse -Force
-Install-FixedWebView2Runtime -Pin $webView2 -LayoutDirectory $layoutDir
+$supportDir = Join-Path $layoutDir "support"
+New-Item -ItemType Directory -Force -Path $supportDir | Out-Null
+Copy-Item -LiteralPath $exePath -Destination (Join-Path $layoutDir "PortableSyncthing.exe")
+Assert-NoLoosePublishNatives -PublishDirectory $publishDir
+Get-ChildItem -LiteralPath $publishDir -Force | Where-Object { $_.Name -ne "PortableSyncthing.exe" } | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $supportDir $_.Name) -Recurse -Force
+}
+Write-Utf8File -Path (Join-Path $supportDir "VERSION.txt") -Text $Version
+Write-Utf8File -Path (Join-Path $supportDir "README.txt") -Text $readme
+Install-FixedWebView2Runtime -Pin $webView2 -LayoutDirectory $supportDir
+Assert-PortableZipLayout -LayoutDirectory $layoutDir
 
 $distFull = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $DistRoot))
 $stageFull = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $stageRoot))

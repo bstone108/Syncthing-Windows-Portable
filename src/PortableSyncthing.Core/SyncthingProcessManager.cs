@@ -66,6 +66,9 @@ public sealed class SyncthingProcessManager : IDisposable
     private async Task RunToExitAsync(string executable, IEnumerable<string> arguments, CancellationToken cancellationToken)
     {
         var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true };
+        var workingDirectory = Path.GetDirectoryName(executable);
+        if (!string.IsNullOrEmpty(workingDirectory))
+            info.WorkingDirectory = workingDirectory;
         foreach (var argument in arguments) info.ArgumentList.Add(argument);
         using var process = Process.Start(info) ?? throw new InvalidOperationException("Could not start Syncthing.");
         await process.WaitForExitAsync(cancellationToken);

@@ -39,7 +39,7 @@ public sealed class SyncthingReleaseUpdater
             ?? throw new InvalidOperationException("Verified archive did not contain syncthing.exe.");
 
         var current = Path.GetDirectoryName(root.SyncthingExecutablePath)!;
-        var previous = Path.Combine(root.RootDirectory, "bin", "previous");
+        var previous = root.PreviousSyncthingDirectory;
         Directory.CreateDirectory(current);
         Directory.CreateDirectory(previous);
         if (File.Exists(root.SyncthingExecutablePath)) File.Copy(root.SyncthingExecutablePath, Path.Combine(previous, "syncthing.exe"), true);

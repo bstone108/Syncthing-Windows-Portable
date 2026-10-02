@@ -7,12 +7,18 @@ public sealed class PortablePathException : Exception
 
 public sealed record PortableRoot(string RootDirectory)
 {
-    public string DataDirectory => Combine(RootDirectory, "data");
+    // RootDirectory stays the folder that contains the executable. Synced-folder mappings
+    // are resolved from here, not from SupportDirectory, so an existing relative path such
+    // as folders\Photos keeps the same absolute location after the layout move.
+    public string SupportDirectory => Combine(RootDirectory, LayoutMigration.SupportFolderName);
+    public string DataDirectory => Combine(SupportDirectory, "data");
     public string SyncthingHomeDirectory => Combine(DataDirectory, "syncthing");
-    public string SyncthingExecutablePath => Combine(Combine(RootDirectory, "bin"), "current", "syncthing.exe");
+    public string SyncthingExecutablePath => Combine(SupportDirectory, "bin", "current", "syncthing.exe");
+    public string PreviousSyncthingDirectory => Combine(SupportDirectory, "bin", "previous");
     public string FolderMappingsPath => Combine(DataDirectory, "portable-folders.json");
     public string LogsDirectory => Combine(DataDirectory, "logs");
-    public string WebView2RuntimeDirectory => Combine(RootDirectory, "WebView2Runtime");
+    public string WebView2RuntimeDirectory => Combine(SupportDirectory, "WebView2Runtime");
+    public string WebView2UserDataDirectory => Combine(DataDirectory, "webview2");
 
     public static PortableRoot FromExecutablePath(string executablePath)
     {

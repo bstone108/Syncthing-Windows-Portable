@@ -114,6 +114,25 @@ class PortableWindowsAppContractTests(unittest.TestCase):
         self.assertNotIn("not bundled in this release", release)
         self.assertNotIn("Evergreen WebView2 Runtime already installed", release)
 
+    def test_support_folder_is_the_only_sidecar(self):
+        package = (ROOT / "scripts/package-windows.ps1").read_text(encoding="utf-8")
+        self.assertIn('Join-Path $layoutDir "support"', package)
+        self.assertIn("Portable layout must contain only PortableSyncthing.exe and support", package)
+        self.assertIn("IncludeNativeLibrariesForSelfExtract must embed them", package)
+        migration = (ROOT / "src/PortableSyncthing.Core/LayoutMigration.cs").read_text(encoding="utf-8")
+        self.assertIn('SupportFolderName = "support"', migration)
+        window = (ROOT / "src/PortableSyncthing.Windows/MainWindow.xaml.cs").read_text(encoding="utf-8")
+        migrate_at = window.index("LayoutMigration.Migrate")
+        self.assertLess(migrate_at, window.index("Directory.CreateDirectory"))
+        self.assertLess(migrate_at, window.index("StartOrPromptForInstallAsync"))
+        self.assertIn("SetLoaderDllFolderPath", window)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("support\\WebView2Runtime", readme)
+        self.assertIn("cert.pem", readme)
+        csproj = (ROOT / "src/PortableSyncthing.Windows/PortableSyncthing.Windows.csproj").read_text(encoding="utf-8")
+        self.assertIn("<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>", csproj)
+        self.assertIn("<DebugType>embedded</DebugType>", csproj)
+
 
 if __name__ == "__main__":
     unittest.main()

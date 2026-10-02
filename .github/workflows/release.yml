@@ -241,9 +241,9 @@ jobs:
 
           Extract \`PortableSyncthing-${APP_VERSION}-win-x64.zip\` and run \`PortableSyncthing.exe\`. This is a portable window app: it does not install a Windows service and it does not use a tray icon. The build is unsigned.
 
-          The first launch still downloads the official Syncthing runtime, verifies its release SHA-256, and places \`syncthing.exe\` in \`bin\\current\`. That runtime is not inside the zip.
+          The zip's only top-level folder is \`PortableSyncthing\`. Inside it are \`PortableSyncthing.exe\` and \`support\`. The first launch still downloads the official Syncthing runtime, verifies its release SHA-256, and places \`syncthing.exe\` in \`support\\bin\\current\`. That runtime is not inside the zip.
 
-          The zip bundles the Fixed Version WebView2 Runtime (win-x64) under \`WebView2Runtime\`. The app uses that local runtime, so the Evergreen WebView2 Runtime does not need to be installed. Keep the extracted folder on a local drive.
+          The zip bundles the Fixed Version WebView2 Runtime (win-x64) under \`support\\WebView2Runtime\`. The app uses that local runtime, so the Evergreen WebView2 Runtime does not need to be installed. Keep the extracted folder on a local drive. A v2026.9.23.1 folder is moved into \`support\` on startup. Synced folders stay where they are.
 
           Verify the zip with \`SHA256SUMS\` (\`sha256sum -c SHA256SUMS\`).
           NOTES
